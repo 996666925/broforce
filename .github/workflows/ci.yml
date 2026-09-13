@@ -1,0 +1,35 @@
+name: CI
+
+# Release 只在打标签时跑，日常提交也要有人把关，所以单独来一条。
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: 缓存依赖
+        uses: Swatinem/rust-cache@v2
+
+      - name: 格式检查
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: 跑测试
+        run: cargo test --locked
+        # 需要游戏在运行的用例都标了 #[ignore]，CI 上不会跑到

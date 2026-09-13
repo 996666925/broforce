@@ -1,0 +1,68 @@
+name: Release
+
+# 推一个 v* 标签就会自动跑测试、构建、发 Release。
+# 也可以在 Actions 页面手动触发——那样只产出 artifact，不发 Release。
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+# softprops/action-gh-release 需要写权限才能创建 Release
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  # 产物改名成这个，避免和游戏自己的 Broforce.exe 混淆
+  BIN_NAME: BroforceTrainer.exe
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存依赖
+        uses: Swatinem/rust-cache@v2
+
+      - name: 跑测试
+        run: cargo test --release --locked
+        # 需要游戏在运行的用例都标了 #[ignore]，这里不会跑到
+
+      - name: 构建
+        run: cargo build --release --locked
+
+      - name: 准备产物
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "target/release/broforce.exe" "dist/$env:BIN_NAME"
+          Get-Item "dist/$env:BIN_NAME" | Select-Object Name, Length
+
+      # 手动触发时也留下可下载的产物
+      - name: 上传 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BIN_NAME }}
+          path: dist/${{ env.BIN_NAME }}
+          if-no-files-found: error
+
+      - name: 发布 Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ env.BIN_NAME }}
+          # 这里不启用 generate_release_notes：正文已经写死了，
+          # 两个都给的话行为取决于 API 怎么取舍，不如只留可预期的这个。
+          body: |
+            下载 `BroforceTrainer.exe` 直接运行，免安装。
+
+            **用法**：启动 Broforce 并**进入关卡** → 点「连接」→ 点「设为 999 生命」。
+
+            > 仅限单人模式。硬核模式的命数走的是另一套字段，本工具不支持。
+            > 详见 [README](https://github.com/${{ github.repository }}#readme)。
