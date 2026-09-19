@@ -142,7 +142,10 @@ impl TrainerApp {
 
         {
             let mut s = st.borrow_mut();
-            s.push(INFO, "用法：启动 Broforce 并进入关卡 → 连接 → 点「设为 999 生命」。");
+            s.push(
+                INFO,
+                "用法：启动 Broforce 并进入关卡 → 连接 → 点「设为 999 生命」。",
+            );
             s.push(WARN, "仅限单人模式，联机使用会影响其他玩家。");
         }
 
