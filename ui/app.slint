@@ -1,0 +1,839 @@
+// Broforce 修改器 —— Slint 界面。
+//
+// 设计：深空蓝底 + 琥珀强调色，卡片分层、顶部氛围光、悬停/按下都有过渡动画。
+// 控件全部自绘，只用 Slint 内置元素（Rectangle / Text / TextInput / TouchArea /
+// Flickable / Timer），不引 std-widgets，所以系统换浅色主题也不会串色。
+//
+// 两条布局约定，都是踩过坑写下来的：
+//   1. 每个布局子项显式写 stretch。Slint 主轴 stretch 默认是 0，靠默认值排版
+//      会随内容漂移，写死之后伸缩行为完全可预测。
+//   2. 外层套一个 Flickable。内容自然高度约 630px，屏幕不够高时能滚，
+//      而不是把日志卡片裁到屏幕外面去。
+
+export struct LogRow {
+    mark: string,
+    text: string,
+    tone: int, // 0 信息 · 1 成功 · 2 警告 · 3 错误
+}
+
+global T {
+    out property <color> bg: #090D14;
+    out property <color> card-a: #19222F;
+    out property <color> card-b: #121926;
+    out property <color> line: #24304A;
+    out property <color> inset: #080C12;
+    out property <color> field: #0B111B;
+    out property <color> field-focus: #0D1521;
+    out property <color> text: #E9EEF7;
+    out property <color> dim: #8C97AB;
+    out property <color> soft: #C6CEDA;
+    out property <color> faint: #566073;
+    out property <color> off: #4B5566;
+    out property <color> accent: #F7A928;
+    out property <color> accent-hi: #FFC45E;
+    out property <color> accent-lo: #C97C0C;
+    out property <color> on-accent: #231400;
+    out property <color> ok: #3ED598;
+    out property <color> warn: #F2B33D;
+    out property <color> err: #FF7373;
+    out property <color> hairline: #FFFFFF12;
+}
+
+// ---------------------------------------------------------------------------
+// 卡片
+// ---------------------------------------------------------------------------
+component Panel inherits Rectangle {
+    border-radius: 14px;
+    background: @linear-gradient(158deg, #19222F 0%, #121926 100%);
+    border-width: 1px;
+    border-color: #24304A;
+    drop-shadow-color: #00000059;
+    drop-shadow-blur: 22px;
+    drop-shadow-offset-y: 7px;
+
+    VerticalLayout {
+        width: parent.width;
+        height: parent.height;
+        padding: 14px;
+        spacing: 11px;
+        @children
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 小零件
+// ---------------------------------------------------------------------------
+component StepChip inherits Rectangle {
+    in property <string> num;
+
+    width: 20px;
+    height: 20px;
+    horizontal-stretch: 0.0;
+    vertical-stretch: 0.0;
+    border-radius: 7px;
+    background: @linear-gradient(140deg, #FFCE72 0%, #E8951A 100%);
+    drop-shadow-color: #F7A92840;
+    drop-shadow-blur: 10px;
+
+    Text {
+        width: parent.width;
+        height: parent.height;
+        text: root.num;
+        color: #221400;
+        font-size: 11.5px;
+        font-weight: 900;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+/// 「1 连接游戏」这种卡片标题行。
+component CardTitle inherits Rectangle {
+    in property <string> step;
+    in property <string> title;
+
+    height: 22px;
+    horizontal-stretch: 1.0;
+    vertical-stretch: 0.0;
+
+    HorizontalLayout {
+        width: parent.width;
+        height: parent.height;
+        spacing: 8px;
+
+        StepChip {
+            num: root.step;
+            cross-axis-self-alignment: center;
+        }
+        Text {
+            text: root.title;
+            color: T.text;
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.3px;
+            horizontal-stretch: 1.0;
+            cross-axis-self-alignment: center;
+        }
+    }
+}
+
+/// 琥珀实心 / 描边幽灵两种样式的按钮。
+component ActionButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> button-enabled: true;
+    in property <bool> accent-style: true;
+    in property <length> button-width: 96px;
+    in property <length> button-height: 34px;
+    in property <length> label-size: 12.5px;
+    callback clicked;
+
+    // 用 min/preferred 而不是 width/height：这样放在 VerticalLayout 里时
+    // 交叉轴默认拉伸，主按钮会自动铺满卡片宽度；需要固定宽度的按钮
+    // （连接 / 检测 / 复制）再单独用 cross-axis-self-alignment 顶住。
+    min-width: root.button-width;
+    preferred-width: root.button-width;
+    min-height: root.button-height;
+    preferred-height: root.button-height;
+    horizontal-stretch: 0.0;
+    vertical-stretch: 0.0;
+    border-radius: 9px;
+    border-width: 1px;
+    background: root.accent-style ? T.accent : #1A2231;
+    border-color: root.accent-style ? #FFD98A66 : #26314A;
+    drop-shadow-color: root.accent-style ? #F7A9284D : transparent;
+    drop-shadow-blur: 18px;
+    drop-shadow-offset-y: 5px;
+
+    states [
+        hover when touch.has-hover && root.button-enabled : {
+            background: root.accent-style ? T.accent-hi : #202A3B;
+            border-color: root.accent-style ? #FFE4A3AA : #35425C;
+        }
+        down when touch.pressed && root.button-enabled : {
+            background: root.accent-style ? T.accent-lo : #2A3446;
+            border-color: root.accent-style ? #FFD98A66 : #3B4964;
+        }
+        off when !root.button-enabled : {
+            background: root.accent-style ? #2A3240 : #171E2A;
+            border-color: #2E3849;
+            drop-shadow-color: transparent;
+        }
+    ]
+
+    // 悬停时整块提亮。比在 states 里换算颜色更统一，也不会打断主色的过渡。
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        border-radius: parent.border-radius;
+        background: #FFFFFF;
+        opacity: (root.button-enabled && touch.has-hover && !touch.pressed)
+            ? (root.accent-style ? 0.16 : 0.07)
+            : 0.0;
+        animate opacity { duration: 140ms; easing: ease-out; }
+    }
+    // 上半部柔光，静态的，负责「有厚度」的观感。
+    Rectangle {
+        width: parent.width;
+        height: parent.height / 2;
+        visible: root.accent-style && root.button-enabled;
+        background: @linear-gradient(180deg, #FFFFFF2E 0%, #FFFFFF00 100%);
+    }
+
+    // 左右各留 14px，标签再长也不会顶到按钮边。
+    Text {
+        x: 14px;
+        y: 0;
+        width: parent.width - 28px;
+        height: parent.height;
+        text: root.label;
+        overflow: elide;
+        color: !root.button-enabled ? T.off : (root.accent-style ? T.on-accent : T.soft);
+        font-size: root.label-size;
+        font-weight: 700;
+        letter-spacing: 0.6px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        enabled: root.button-enabled;
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+/// 日志一行。固定行高、超长文本省略号收尾——行高固定，滚动区的
+/// `content-height` 才能用一个乘法直接算出来，不用去量文字。
+component LogLine inherits Rectangle {
+    in property <LogRow> entry;
+
+    private property <color> tone-color: root.entry.tone == 1
+        ? T.ok
+        : (root.entry.tone == 2 ? T.warn : (root.entry.tone == 3 ? T.err : T.dim));
+
+    height: 17px;
+    horizontal-stretch: 1.0;
+    vertical-stretch: 0.0;
+
+    HorizontalLayout {
+        width: parent.width;
+        height: parent.height;
+        spacing: 7px;
+
+        Text {
+            width: 10px;
+            text: root.entry.mark;
+            color: root.tone-color;
+            font-size: 11px;
+            font-weight: 700;
+            horizontal-stretch: 0.0;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.entry.text;
+            color: root.tone-color;
+            font-size: 11.5px;
+            font-family: "Consolas";
+            horizontal-stretch: 1.0;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 窗口
+// ---------------------------------------------------------------------------
+export component AppWindow inherits Window {
+    // ---------- 输入 ----------
+    // 进程名的初始值由 Rust 侧的 DEFAULT_EXE 设进来，只留一个出处。
+    in-out property <string> exe-name;
+    in-out property <string> player: "0";
+    in-out property <string> lives: "999";
+
+    // ---------- 状态（由 Rust 侧写） ----------
+    in property <bool> attached: false;
+    in property <bool> busy: false;
+    in property <string> status-text: "未连接";
+    in property <string> hint-text: "先启动 Broforce，再点「连接」。";
+    in property <string> lives-now-text: "—";
+    in property <string> lives-addr-text: "尚未定位内存地址";
+    in property <bool> lives-known: false;
+    in property <string> banner-text: "";
+    in property <int> banner-tone: 0; // 0 隐藏 · 1 成功 · 2 失败
+    in property <[LogRow]> logs;
+
+    // ---------- 通知 Rust ----------
+    callback attach;
+    callback detach;
+    callback apply;
+    callback detect;
+    callback clear-log;
+    callback copy-log;
+
+    preferred-width: 546px;
+    preferred-height: 700px;
+    min-width: 476px;
+    min-height: 420px;
+    title: "Broforce 修改器 — 999 生命";
+    always-on-top: true;
+    background: T.bg;
+    default-font-family: "Microsoft YaHei UI";
+
+    // 忙碌指示灯的呼吸相位；日志贴底用的一次性触发。
+    property <bool> pulse: false;
+    property <bool> stick: false;
+
+    Timer {
+        interval: 620ms;
+        running: root.busy;
+        triggered => { root.pulse = !root.pulse; }
+    }
+
+    property <int> log-count: root.logs.length;
+    changed log-count => { root.stick = true; }
+    Timer {
+        interval: 24ms;
+        running: root.stick;
+        triggered => {
+            log-flick.content-y = -max(0px, log-flick.content-height - log-flick.height);
+            root.stick = false;
+        }
+    }
+
+    // ---------- 背景 ----------
+    Rectangle {
+        width: 100%;
+        height: 100%;
+        background: @linear-gradient(168deg, #121C2C 0%, #0A0E15 56%, #070A10 100%);
+    }
+    Rectangle {
+        width: 100%;
+        height: 260px;
+        background: @linear-gradient(180deg, #F7A92816 0%, #F7A92800 100%);
+    }
+
+    // ---------- 内容 ----------
+    // 外层滚动只为兜底矮屏幕：默认尺寸下内容刚好放得下。
+    // `mouse-drag-pan-enabled: false` 是关键——鼠标拖拽让给输入框选字，
+    // 但滚轮仍然能滚（ScrollView 内部就是靠这个区分拖拽和滚轮的）。
+    scroll := Flickable {
+        width: 100%;
+        height: 100%;
+        interactive: true;
+        mouse-drag-pan-enabled: false;
+        content-width: self.width;
+        content-height: max(content.preferred-height, self.height);
+
+        content := VerticalLayout {
+            width: parent.width;
+            // 窗口比内容高时铺满，让日志卡片吃掉多余高度。
+            height: max(self.preferred-height, scroll.height);
+            padding-left: 16px;
+            padding-right: 16px;
+            padding-top: 14px;
+            padding-bottom: 12px;
+            spacing: 11px;
+
+            // ================= 顶部标题 =================
+            Rectangle {
+                height: 52px;
+                horizontal-stretch: 1.0;
+                vertical-stretch: 0.0;
+
+                HorizontalLayout {
+                    width: parent.width;
+                    height: parent.height;
+                    spacing: 12px;
+
+                    // 徽标
+                    Rectangle {
+                        width: 46px;
+                        height: 46px;
+                        horizontal-stretch: 0.0;
+                        cross-axis-self-alignment: center;
+                        border-radius: 13px;
+                        background: @linear-gradient(140deg, #FFD37A 0%, #F7A928 46%, #D97E12 100%);
+                        drop-shadow-color: #F7A9284D;
+                        drop-shadow-blur: 18px;
+                        drop-shadow-offset-y: 5px;
+
+                        Text {
+                            width: parent.width;
+                            height: parent.height;
+                            text: "BF";
+                            color: #241500;
+                            font-size: 18px;
+                            font-weight: 900;
+                            letter-spacing: 0.6px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    // 标题 / 副标题
+                    VerticalLayout {
+                        horizontal-stretch: 1.0;
+                        spacing: 3px;
+                        alignment: center;
+
+                        Text {
+                            text: "BROFORCE 修改器";
+                            color: T.text;
+                            font-size: 18px;
+                            font-weight: 800;
+                            letter-spacing: 0.5px;
+                            vertical-stretch: 0.0;
+                        }
+                        Text {
+                            text: "LIVES 999 · 一键满命";
+                            color: T.dim;
+                            font-size: 10.5px;
+                            letter-spacing: 1.7px;
+                            vertical-stretch: 0.0;
+                        }
+                    }
+
+                    // 连接状态胶囊
+                    Rectangle {
+                        width: status-pill.preferred-width + 30px;
+                        height: 26px;
+                        horizontal-stretch: 0.0;
+                        cross-axis-self-alignment: center;
+                        border-radius: 13px;
+                        background: root.attached ? #3ED5981F : #FFFFFF0F;
+                        border-width: 1px;
+                        border-color: root.attached ? #3ED59859 : T.hairline;
+                        animate background, border-color { duration: 220ms; }
+
+                        HorizontalLayout {
+                            width: parent.width;
+                            height: parent.height;
+                            padding-left: 11px;
+                            padding-right: 11px;
+                            spacing: 6px;
+
+                            // 状态点：忙碌时呼吸
+                            Rectangle {
+                                width: 7px;
+                                height: 7px;
+                                border-radius: 4px;
+                                horizontal-stretch: 0.0;
+                                cross-axis-self-alignment: center;
+                                background: root.attached ? T.ok : T.faint;
+                                opacity: root.busy ? (root.pulse ? 1.0 : 0.25) : 1.0;
+                                animate opacity { duration: 600ms; easing: ease-in-out; }
+                            }
+                            status-pill := Text {
+                                text: root.status-text;
+                                color: root.attached ? T.ok : T.dim;
+                                font-size: 11px;
+                                font-weight: 700;
+                                letter-spacing: 0.3px;
+                                horizontal-stretch: 0.0;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ================= 进度条 =================
+            Rectangle {
+                height: 3px;
+                horizontal-stretch: 1.0;
+                vertical-stretch: 0.0;
+                border-radius: 2px;
+                background: #FFFFFF12;
+                visible: root.busy;
+                clip: true;
+
+                Rectangle {
+                    width: parent.width * 0.42;
+                    height: parent.height;
+                    border-radius: 2px;
+                    background: @linear-gradient(90deg, #F7A92800 0%, #F7A928 50%, #F7A92800 100%);
+                    x: root.pulse ? parent.width - self.width : 0px;
+                    animate x { duration: 620ms; easing: ease-in-out; }
+                }
+            }
+
+            // ================= 1 · 连接游戏 =================
+            Panel {
+                horizontal-stretch: 1.0;
+                vertical-stretch: 0.0;
+
+                CardTitle {
+                    step: "1";
+                    title: "连接游戏";
+                }
+
+                HorizontalLayout {
+                    height: 36px;
+                    horizontal-stretch: 1.0;
+                    vertical-stretch: 0.0;
+                    spacing: 9px;
+
+                    // 进程名
+                    Rectangle {
+                        height: 34px;
+                        horizontal-stretch: 1.0;
+                        cross-axis-self-alignment: center;
+                        border-radius: 9px;
+                        background: exe-input.has-focus ? T.field-focus : T.field;
+                        border-width: 1px;
+                        border-color: exe-input.has-focus ? T.accent : T.line;
+                        clip: true;
+                        animate background, border-color { duration: 160ms; }
+
+                        Text {
+                            visible: exe-input.text.is-empty;
+                            x: 11px;
+                            width: parent.width - 22px;
+                            height: parent.height;
+                            text: "进程名";
+                            color: T.faint;
+                            font-size: 12.5px;
+                            vertical-alignment: center;
+                        }
+                        exe-input := TextInput {
+                            x: 11px;
+                            y: 0;
+                            width: parent.width - 22px;
+                            height: parent.height;
+                            text <=> root.exe-name;
+                            enabled: !root.attached;
+                            font-size: 12.5px;
+                            color: root.attached ? T.dim : T.text;
+                            selection-background-color: #F7A9285A;
+                            selection-foreground-color: #FFFFFF;
+                            single-line: true;
+                            vertical-alignment: center;
+                            accepted => { root.attach(); }
+                        }
+                    }
+
+                    if root.attached : ActionButton {
+                        label: "断开";
+                        accent-style: false;
+                        button-width: 76px;
+                        cross-axis-self-alignment: center;
+                        button-enabled: !root.busy;
+                        clicked => { root.detach(); }
+                    }
+                    if !root.attached : ActionButton {
+                        label: "连接";
+                        button-width: 76px;
+                        cross-axis-self-alignment: center;
+                        clicked => { root.attach(); }
+                    }
+                }
+
+                Text {
+                    text: root.hint-text;
+                    color: root.attached ? T.ok : T.faint;
+                    font-size: 11px;
+                    horizontal-stretch: 1.0;
+                    vertical-stretch: 0.0;
+                    overflow: elide;
+                    animate color { duration: 200ms; }
+                }
+            }
+
+            // ================= 2 · 修改生命 =================
+            Panel {
+                horizontal-stretch: 1.0;
+                vertical-stretch: 0.0;
+
+                CardTitle {
+                    step: "2";
+                    title: "修改生命";
+                }
+
+                // 当前生命读数
+                Rectangle {
+                    height: 62px;
+                    horizontal-stretch: 1.0;
+                    vertical-stretch: 0.0;
+                    border-radius: 11px;
+                    background: @linear-gradient(180deg, #0A0F17 0%, #0D131E 100%);
+                    border-width: 1px;
+                    border-color: #1E2838;
+
+                    HorizontalLayout {
+                        width: parent.width;
+                        height: parent.height;
+                        padding-left: 14px;
+                        padding-right: 14px;
+                        spacing: 10px;
+
+                        VerticalLayout {
+                            horizontal-stretch: 1.0;
+                            spacing: 3px;
+                            alignment: center;
+
+                            Text {
+                                text: "当前生命";
+                                color: T.dim;
+                                font-size: 10.5px;
+                                letter-spacing: 1.5px;
+                                vertical-stretch: 0.0;
+                            }
+                            Text {
+                                text: root.lives-addr-text;
+                                color: T.faint;
+                                font-size: 10px;
+                                font-family: "Consolas";
+                                overflow: elide;
+                                vertical-stretch: 0.0;
+                            }
+                        }
+
+                        Text {
+                            text: root.lives-now-text;
+                            color: root.lives-known ? T.ok : T.faint;
+                            font-size: 34px;
+                            font-weight: 800;
+                            font-family: "Consolas";
+                            horizontal-stretch: 0.0;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                            animate color { duration: 220ms; }
+                        }
+                    }
+                }
+
+                // 玩家 / 生命
+                HorizontalLayout {
+                    height: 36px;
+                    horizontal-stretch: 1.0;
+                    vertical-stretch: 0.0;
+                    spacing: 9px;
+
+                    Text {
+                        text: "玩家";
+                        color: T.dim;
+                        font-size: 11.5px;
+                        horizontal-stretch: 0.0;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        width: 56px;
+                        height: 34px;
+                        horizontal-stretch: 0.0;
+                        cross-axis-self-alignment: center;
+                        border-radius: 9px;
+                        background: player-input.has-focus ? T.field-focus : T.field;
+                        border-width: 1px;
+                        border-color: player-input.has-focus ? T.accent : T.line;
+                        clip: true;
+                        animate background, border-color { duration: 160ms; }
+
+                        player-input := TextInput {
+                            x: 10px;
+                            y: 0;
+                            width: parent.width - 20px;
+                            height: parent.height;
+                            text <=> root.player;
+                            font-size: 12.5px;
+                            color: T.text;
+                            selection-background-color: #F7A9285A;
+                            selection-foreground-color: #FFFFFF;
+                            single-line: true;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            accepted => { root.apply(); }
+                        }
+                    }
+
+                    Text {
+                        text: "生命";
+                        color: T.dim;
+                        font-size: 11.5px;
+                        horizontal-stretch: 0.0;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        width: 98px;
+                        height: 34px;
+                        horizontal-stretch: 0.0;
+                        cross-axis-self-alignment: center;
+                        border-radius: 9px;
+                        background: lives-input.has-focus ? T.field-focus : T.field;
+                        border-width: 1px;
+                        border-color: lives-input.has-focus ? T.accent : T.line;
+                        clip: true;
+                        animate background, border-color { duration: 160ms; }
+
+                        lives-input := TextInput {
+                            x: 10px;
+                            y: 0;
+                            width: parent.width - 20px;
+                            height: parent.height;
+                            text <=> root.lives;
+                            font-size: 12.5px;
+                            color: T.text;
+                            selection-background-color: #F7A9285A;
+                            selection-foreground-color: #FFFFFF;
+                            single-line: true;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            accepted => { root.apply(); }
+                        }
+                    }
+                }
+
+                // 主操作
+                ActionButton {
+                    label: root.busy ? "处理中…" : "设为 999 生命";
+                    button-height: 44px;
+                    label-size: 14.5px;
+                    button-enabled: root.attached && !root.busy;
+                    clicked => { root.apply(); }
+                    
+                }
+
+                // 只读检测
+                ActionButton {
+                    label: "检测当前生命";
+                    accent-style: false;
+                    button-width: 138px;
+                    cross-axis-self-alignment: start;
+                    button-enabled: root.attached && !root.busy;
+                    clicked => { root.detect(); }
+                }
+
+                if root.banner-tone != 0 : Rectangle {
+                    height: 36px;
+                    horizontal-stretch: 1.0;
+                    vertical-stretch: 0.0;
+                    border-radius: 9px;
+                    background: root.banner-tone == 1 ? #3ED5981F : #FF73731F;
+                    border-width: 1px;
+                    border-color: root.banner-tone == 1 ? #3ED5984D : #FF73734D;
+
+                    Text {
+                        x: 11px;
+                        width: parent.width - 22px;
+                        height: parent.height;
+                        text: root.banner-text;
+                        color: root.banner-tone == 1 ? T.ok : T.err;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+
+            // ================= 3 · 运行日志 =================
+            Panel {
+                horizontal-stretch: 1.0;
+                vertical-stretch: 1.0;
+                min-height: 168px;
+
+                Rectangle {
+                    height: 26px;
+                    horizontal-stretch: 1.0;
+                    vertical-stretch: 0.0;
+
+                    HorizontalLayout {
+                        width: parent.width;
+                        height: parent.height;
+                        spacing: 7px;
+
+                        Text {
+                            text: "运行日志";
+                            color: T.text;
+                            font-size: 12.5px;
+                            font-weight: 700;
+                            letter-spacing: 0.3px;
+                            horizontal-stretch: 1.0;
+                            cross-axis-self-alignment: center;
+                        }
+                        ActionButton {
+                            label: "复制";
+                            accent-style: false;
+                            button-width: 52px;
+                            button-height: 24px;
+                            label-size: 11px;
+                            cross-axis-self-alignment: center;
+                            clicked => { root.copy-log(); }
+                        }
+                        ActionButton {
+                            label: "清空";
+                            accent-style: false;
+                            button-width: 52px;
+                            button-height: 24px;
+                            label-size: 11px;
+                            cross-axis-self-alignment: center;
+                            clicked => { root.clear-log(); }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    vertical-stretch: 1.0;
+                    horizontal-stretch: 1.0;
+                    min-height: 96px;
+                    border-radius: 10px;
+                    background: T.inset;
+                    border-width: 1px;
+                    border-color: #1D2736;
+                    clip: true;
+
+                    log-flick := Flickable {
+                        x: 1px;
+                        y: 1px;
+                        width: parent.width - 2px;
+                        height: parent.height - 2px;
+                        content-width: self.width;
+                        content-height: root.logs.length * 17px + 12px;
+                        interactive: true;
+
+                        VerticalLayout {
+                            width: parent.width;
+                            padding: 6px;
+                            spacing: 0px;
+
+                            for row[i] in root.logs : LogLine { entry: row; }
+                        }
+                    }
+
+                    // 自绘细滚动条
+                    Rectangle {
+                        x: parent.width - 6px;
+                        y: 4px;
+                        width: 3px;
+                        height: parent.height - 8px;
+                        border-radius: 2px;
+                        background: #FFFFFF0F;
+                        visible: log-flick.content-height > log-flick.height + 1px;
+
+                        Rectangle {
+                            width: parent.width;
+                            height: max(20px, parent.height * log-flick.height / max(1px, log-flick.content-height));
+                            border-radius: parent.border-radius;
+                            y: (parent.height - self.height) * clamp(
+                                -log-flick.content-y / max(1px, log-flick.content-height - log-flick.height), 0, 1);
+                            background: #FFFFFF38;
+                        }
+                    }
+                }
+            }
+
+            // ================= 页脚 =================
+            Text {
+                height: 16px;
+                horizontal-stretch: 1.0;
+                vertical-stretch: 0.0;
+                text: "只读检测不改动任何内存 · 请在关卡内使用 · 仅限单人模式";
+                color: T.faint;
+                font-size: 10.5px;
+                letter-spacing: 0.3px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+}

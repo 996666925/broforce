@@ -2,9 +2,13 @@
 
 use std::ffi::c_void;
 use std::mem::size_of;
+use std::ptr::{copy_nonoverlapping, null_mut};
 
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, HANDLE, STILL_ACTIVE, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    CloseHandle, GetLastError, GlobalFree, HANDLE, STILL_ACTIVE, WAIT_OBJECT_0, WAIT_TIMEOUT,
+};
+use windows_sys::Win32::System::DataExchange::{
+    CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
 };
 use windows_sys::Win32::System::Diagnostics::Debug::{ReadProcessMemory, WriteProcessMemory};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
@@ -12,7 +16,8 @@ use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     Process32FirstW, Process32NextW, TH32CS_SNAPMODULE, TH32CS_SNAPPROCESS,
 };
 use windows_sys::Win32::System::Memory::{
-    MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_EXECUTE_READWRITE, VirtualAllocEx, VirtualFreeEx,
+    GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE,
+    PAGE_EXECUTE_READWRITE, VirtualAllocEx, VirtualFreeEx,
 };
 use windows_sys::Win32::System::Threading::{
     CreateRemoteThread, GetExitCodeProcess, OpenProcess, PROCESS_CREATE_THREAD,
@@ -242,6 +247,53 @@ impl Process {
             WAIT_TIMEOUT => Err(format!("远程线程超时（{timeout_ms} ms）未返回")),
             other => Err(format!("等待远程线程失败，返回码 {other}")),
         }
+    }
+}
+
+/// 把文本写进系统剪贴板。
+///
+/// 剪贴板是全局独占资源，别的程序正开着的时候 `OpenClipboard` 就会失败——
+/// 直接返回 `false`，让调用方去提示用户，这里不重试也不报错。
+pub fn set_clipboard_text(text: &str) -> bool {
+    // CF_UNICODETEXT。windows-sys 把它放在 Ole 模块里，为了一个常量多拉一个
+    // feature 不划算，直接写字面值（Win32 里这个值是稳定的）。
+    const CF_UNICODETEXT: u32 = 13;
+
+    // 结尾的 NUL 要一起写进去，系统读的时候以它为准。
+    let mut utf16: Vec<u16> = text.encode_utf16().collect();
+    utf16.push(0);
+
+    unsafe {
+        if OpenClipboard(null_mut()) == 0 {
+            return false;
+        }
+
+        // 从这里起无论走哪条分支都必须 CloseClipboard，否则会把剪贴板锁死。
+        let mut ok = EmptyClipboard() != 0;
+        if ok {
+            let bytes = utf16.len() * size_of::<u16>();
+            let mem = GlobalAlloc(GMEM_MOVEABLE, bytes);
+            if mem.is_null() {
+                ok = false;
+            } else {
+                let dst = GlobalLock(mem);
+                if dst.is_null() {
+                    GlobalFree(mem);
+                    ok = false;
+                } else {
+                    copy_nonoverlapping(utf16.as_ptr().cast::<u8>(), dst.cast::<u8>(), bytes);
+                    GlobalUnlock(mem);
+                    // 交接成功之后这块内存归系统所有；失败才轮到我们收尾。
+                    if SetClipboardData(CF_UNICODETEXT, mem).is_null() {
+                        GlobalFree(mem);
+                        ok = false;
+                    }
+                }
+            }
+        }
+
+        CloseClipboard();
+        ok
     }
 }
 

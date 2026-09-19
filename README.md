@@ -1,6 +1,6 @@
 # Broforce 修改器
 
-一键把 Broforce 的生命值改成 999。Rust + egui 写的 Windows 桌面小工具，单个 exe、不需要注入 DLL。
+一键把 Broforce 的生命值改成 999。Rust + Slint 写的 Windows 桌面小工具，单个 exe、不需要注入 DLL。
 
 
 ## 用法
@@ -103,15 +103,21 @@ cargo test -- --ignored    # 需要 Broforce 正在运行（只读，不改游�
 ## 项目结构
 
 ```
+build.rs       编译 ui/app.slint（改界面文件后 cargo 会自动重编）
+ui/
+  app.slint    全部界面：配色、卡片、按钮、输入框、日志视图
 src/
-  main.rs      eframe 入口
-  app.rs       egui 界面
+  main.rs      Slint 入口
+  app.rs       界面与业务逻辑之间的胶水层（界面状态都留在这里）
   trainer.rs   业务逻辑：定位 life 地址、写入
   inject.rs    x64 stub 生成 + 远程执行
   mono.rs      定位 mono.dll、解析导出、算函数地址
   pe.rs        PE 导出表解析
   win32.rs     进程 / 内存 / 远程线程 API 封装
 ```
+
+界面是纯 Slint 自绘的，没引 `std-widgets`——配色和圆角都在 `ui/app.slint` 顶部的
+`global T` 里，改主题只用改那几行。
 
 ## 发版
 
